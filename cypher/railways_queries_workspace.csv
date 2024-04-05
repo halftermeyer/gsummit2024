@@ -1,0 +1,282 @@
+name,description,query,id,parentId,isFolder
+Railways,,,0,,true
+Ingestion,,,1,0,true
+⬇️ Load All Data,,"// 
+// To execute this in the Neo4j Browser - copy and paste the contents into the execution box.
+// 
+// This script will add OperationalPoints, Sections and POIs
+//
+// NB. Running this script in it's entirety will erase your database first.
+//
+
+//
+// WARNING!
+// This drops all the GDS projections from your current database
+//
+CALL gds.graph.list() YIELD graphName AS toDrop
+CALL gds.graph.drop(toDrop) YIELD graphName
+RETURN ""Dropped "" + graphName;
+
+//
+// WARNING! 
+// This erases your database contents
+//
+MATCH (n)
+DETACH DELETE n;
+
+// 
+// WARNING! 
+// This DROPs all your indexes and constraints
+//
+CALL apoc.schema.assert({},{});
+
+//
+//CREATE a CONSTRAINT to ensure that the 'id' of an Operational Point is both there, and unique.
+//
+CREATE CONSTRAINT uc_OperationalPoint_id IF NOT EXISTS FOR (op:OperationalPoint) REQUIRE (op.id) IS UNIQUE;
+
+//
+// Create index for the Operation Point name
+//
+CREATE INDEX index_OperationalPointName_name IF NOT EXISTS FOR (opn:OperationalPointName) ON (opn.name);
+
+//
+// Loading Operational Points
+//
+LOAD CSV WITH HEADERS FROM ""https://raw.githubusercontent.com/cskardon/gsummit2023/main/data/OperationalPoint_All.csv"" AS row
+//This WITH is to ensure our data is as normalized as we can
+WITH
+    trim(row.id) AS id, //trim will remove and start and trailing spaces from an ID
+    toFloat(row.latitude) AS latitude, //toFloat will 
+    toFloat(row.longitude) AS longitude,
+    trim(row.name) AS name,
+    [] + trim(row.country) + trim(row.extralabel) AS labels,
+    trim(row.country) AS country
+MERGE (op:OperationalPoint {id: id})
+SET
+    op.geolocation = Point({latitude: latitude, longitude: longitude})
+WITH op, labels, name, country
+CALL apoc.create.addLabels( op, labels ) YIELD node
+CREATE (node)-[:NAMED {country: country}]->(:OperationalPointName {name: name});
+
+//
+// Load Section Length Data
+//
+LOAD CSV WITH HEADERS FROM ""https://raw.githubusercontent.com/cskardon/gsummit2023/main/data/SECTION_ALL_Length.csv"" AS row
+WITH
+    trim(row.source) AS sourceId,
+    trim(row.target) AS targetId,
+    toFloat(row.sectionlength) AS length
+MATCH (source:OperationalPoint WHERE source.id = sourceId)
+MATCH (target:OperationalPoint WHERE target.id = targetId)
+MERGE (source)-[s:SECTION]->(target)
+SET s.sectionlength = length;
+
+//
+// Load Speed Data
+//
+LOAD CSV WITH HEADERS FROM ""https://raw.githubusercontent.com/cskardon/gsummit2023/main/data/SECTION_ALL_Speed.csv"" AS row
+WITH
+    trim(row.source) AS sourceId,
+    trim(row.target) AS targetId,
+    toFloat(row.sectionspeed) AS speed
+MATCH (source:OperationalPoint WHERE source.id = sourceId)
+MATCH (target:OperationalPoint WHERE target.id = targetId)
+MERGE (source)-[s:SECTION]->(target)
+SET s.speed = speed;
+
+//
+// Load Point of Interest data
+//
+LOAD CSV WITH HEADERS FROM 'https://raw.githubusercontent.com/cskardon/gsummit2023/main/data/POIs.csv' AS row
+WITH 
+    row.CITY AS city,
+    row.POI_DESCRIPTION AS description,
+    row.LINK_FOTO AS linkFoto,
+    row.LINK_WEBSITE AS linkWeb,
+    row.LAT AS lat,
+    row.LONG AS long,
+    row.SECRET AS secret
+CREATE (po:POI {
+    geolocation : point({latitude: toFloat(lat),longitude: toFloat(long)}),
+    description : description,
+    city : city,
+    linkWebSite : linkWeb,
+    linkFoto : linkFoto,
+    long : toFloat(long),
+    lat : toFloat(lat),
+    secret : toBoolean(secret)
+});
+
+//
+// Link POI to nearest OperationalPoint that is a Station or SmallStation
+// by finding the closest distance between `geolocation` point of the POI and the next
+// available station / passenger stop `geolocation` point
+//
+MATCH 
+    (poi:POI), 
+    (op:Station|SmallStation) 
+WITH 
+    poi, op, 
+    point.distance(poi.geolocation, op.geolocation) AS distance
+ORDER BY distance
+WITH poi, COLLECT(op)[0] AS closest
+MERGE (closest)-[:IS_NEAR]->(poi);",2,1,false
+👀 Data Model,,"CALL apoc.meta.subGraph({labels:['OperationalPoint', 'OperationalPointName', 'POI']})",3,1,false
+Basic queries,,,4,0,true
+⭕️ Get 10 OperationPointName,,"MATCH (opn:OperationalPointName) 
+RETURN opn 
+LIMIT 10;",5,4,false
+⭕️ Get 50 OperationPoint,,"MATCH (op:OperationalPoint) 
+RETURN op 
+LIMIT 50;",6,4,false
+😢 Count orphaned nodes,,"MATCH (op:OperationalPoint)
+WHERE NOT EXISTS ( (op)-[:SECTION]-() )
+RETURN COUNT(op);",7,4,false
+🫥 Remove orphaned and their names,,"MATCH (op:OperationalPoint)-[:NAMED]->(opn:OperationalPointName)
+WHERE NOT EXISTS ( (op)-[:SECTION]-() )
+DETACH DELETE op, opn",8,4,false
+⭕️-->⭕️ Get rels between OP,,"MATCH path=(:OperationalPoint)--(:OperationalPoint) 
+RETURN path 
+LIMIT 100;",9,4,false
+⭕️-[]->⭕️ Get SECTIONs,,"MATCH path=(:OperationalPoint)-[:SECTION]->(:OperationalPoint) 
+RETURN path 
+LIMIT 100;",10,4,false
+⭕️ Get node with filter - 1,,"MATCH (op:OperationalPoint {id:'SECst'}) 
+RETURN op;",11,4,false
+⭕️ Get node with filter - 2,,"MATCH (op:OperationalPoint WHERE op.id='SECst') 
+RETURN op;",12,4,false
+" ⭕️ Get node with filter - 3",,"MATCH (op:OperationalPoint) 
+WHERE op.id='SECst' 
+RETURN op;",13,4,false
+Profiling,,,14,0,true
+🧠 Explain,,"EXPLAIN
+MATCH (op:OperationalPoint {id:'SECst'}) 
+RETURN op;",15,14,false
+🧠⚙️ Profile,,"PROFILE
+MATCH (op:OperationalPoint {id:'SECst'}) 
+RETURN op;",16,14,false
+🧠⚙️ Profile filtered - 1,,"PROFILE
+MATCH (op:OperationalPoint {id:'SECst'}) 
+RETURN op;",17,14,false
+🧠⚙️ Profile filtered - 2,,"PROFILE
+MATCH (op:OperationalPoint WHERE op.id='SECst')
+RETURN op;",18,14,false
+🧠⚙️ Profile filtered - 3,,"PROFILE
+MATCH (op:OperationalPoint) 
+WHERE op.id='SECst' 
+RETURN op;",19,14,false
+Data quality,,,20,0,true
+🕵️‍♂️ eurotunnel ?,,"MATCH path=( (uk:UK)-[:SECTION]-(france:France) )
+RETURN path 
+LIMIT 1",21,20,false
+🕵🏻 Stockholm to Berlin ?,,"MATCH 
+    (:OperationalPointName {name:'Stockholms central'})<-[:NAMED]-(stockholm:OperationalPoint),
+    (:OperationalPointName {name:'Berlin Hauptbahnhof - Lehrter Bahnhof'})<-[:NAMED]-(berlin:OperationalPoint)
+WITH stockholm, berlin
+MATCH p= (stockholm)-[:SECTION]-{1,20}(berlin)
+RETURN p 
+LIMIT 1",22,20,false
+🇩🇪🌉🇩🇰 Curate Ger --> Den,,"MATCH 
+    (germany:BorderPoint:Germany),
+    (denmark:Denmark)
+WITH 
+    germany, denmark, 
+    point.distance(germany.geolocation, denmark.geolocation) AS distance
+ORDER BY distance LIMIT 1
+MERGE (germany)-[:SECTION {sectionlength: distance/1000.0, curated: true}]->(denmark);",23,20,false
+🇫🇷🕳️➡🕳️🇬🇧 Curate Eurotunnel,,"MATCH 
+    (uk:UK:BorderPoint),
+    (france:France)
+WITH 
+    uk, france, 
+    point.distance(france.geolocation, uk.geolocation) as distance
+ORDER by distance LIMIT 1
+MERGE (france)-[:SECTION {sectionlength: distance/1000.0, curated: true}]->(uk);",24,20,false
+➡ Curate Nyborg --> Hjulby,,"MATCH 
+    (:OperationalPointName {name: 'Nyborg'})<-[:NAMED]-(nyborg:OperationalPoint),
+    (:OperationalPointName {name: 'Hjulby'})<-[:NAMED]-(hjulby:OperationalPoint)
+MERGE (nyborg)-[:SECTION {sectionlength: point.distance(nyborg.geolocation, hjulby.geolocation)/1000.0, curated: true}]->(hjulby);",25,20,false
+Shortest path,,,26,0,true
+⏱️ Compute best time,,"MATCH (o1:OperationalPointName)<-[:NAMED]-(s1:Station)-[s:SECTION]->(s2:Station)-[:NAMED]->(o2:OperationalPointName)
+WHERE 
+    NOT (s.speed IS NULL) 
+    AND NOT (s.sectionlength IS NULL )
+WITH 
+    o1.name AS startName, o2.name AS endName,
+    (s.sectionlength / s.speed) * 60 * 60 AS timeTakenInSeconds
+    LIMIT 1
+RETURN startName, endName, timeTakenInSeconds",27,26,false
+⏱️✍️ All best times,,"MATCH (:OperationalPoint)-[r:SECTION]->(:OperationalPoint)
+WHERE 
+    r.speed IS NOT NULL 
+    AND r.sectionlength IS NOT NULL
+SET r.traveltime = (r.sectionlength / r.speed) * 60 * 60",28,26,false
+⚡️Shortest malmo --> stockholm (# hops),,"// Cypher shortest path
+MATCH 
+    (:OperationalPointName {name:'Stockholms central'})<-[:NAMED]-(stockholm:OperationalPoint),
+    (:OperationalPointName {name:'Malmö central'})<-[:NAMED]-(malmo:OperationalPoint)
+WITH stockholm, malmo
+MATCH path = shortestPath ( (malmo)-[:SECTION*]-(stockholm) )
+RETURN path",29,26,false
+Graph Data Science,,,30,0,true
+GDS projection,,,31,30,true
+🧹 GDS projection,,"CALL gds.graph.list() YIELD graphName AS toDrop
+CALL gds.graph.drop(toDrop) YIELD graphName
+RETURN ""Dropped "" + graphName;",32,31,false
+📽️ GDS in-memory projection,,"MATCH (source)-[r:SECTION]->(target)
+WITH gds.graph.project(
+  'OperationalPoints',
+  source,
+  target,
+  { relationshipProperties: r { .sectionlength, .traveltime } },
+  {undirectedRelationshipTypes: ['SECTION']}
+) as g
+RETURN g.graphName AS graph, g.nodeCount AS nodes, g.relationshipCount AS rels",33,31,false
+GDS Path finding,,,34,30,true
+⚡️⏱️ Shortest Stockholm --> Malmo,,"MATCH     
+    (:OperationalPointName {name:'Stockholms central'})<-[:NAMED]-(stockholm:OperationalPoint),
+    (:OperationalPointName {name:'Malmö central'})<-[:NAMED]-(malmo:OperationalPoint)
+CALL gds.shortestPath.dijkstra.stream('OperationalPoints', {
+    sourceNode: malmo,
+    targetNode: stockholm,
+    relationshipWeightProperty: 'traveltime'
+})
+YIELD index, sourceNode, targetNode, totalCost, nodeIds, costs, path
+RETURN *;",35,34,false
+⚡️👣 Shortest Stockholm --> Malmo,,"MATCH     
+    (:OperationalPointName {name:'Stockholms central'})<-[:NAMED]-(stockholm:OperationalPoint),
+    (:OperationalPointName {name:'Malmö central'})<-[:NAMED]-(malmo:OperationalPoint)
+CALL gds.shortestPath.dijkstra.stream('OperationalPoints', {
+    sourceNode: malmo,
+    targetNode: stockholm,
+    relationshipWeightProperty: 'sectionlength'
+})
+YIELD index, sourceNode, targetNode, totalCost, nodeIds, costs, path
+RETURN *;",36,34,false
+GDS Community Detection,,,37,30,true
+🏝️ small WCCs,,"CALL gds.wcc.stream('OperationalPoints') YIELD nodeId, componentId
+WITH collect(gds.util.asNode(nodeId).id) AS nodes, componentId
+RETURN nodes, componentId 
+ORDER BY size(nodes) ASC LIMIT 50;",38,37,false
+🏝️✍️ WCCs,,"CALL gds.wcc.write('OperationalPoints', {writeProperty: 'componentId'});",39,37,false
+📒 index wcc componentId,,CREATE INDEX index_OperationalPointName_componentid IF NOT EXISTS FOR (opn:OperationalPointName) ON (opn.componentId);,40,37,false
+🏝️ find wccomponent from node,,"MATCH (op:OperationalPoint {id: 'UKN4288'})
+WITH op.componentId as component
+MATCH path = (:OperationalPoint {componentId: component})-[:SECTION]->()
+RETURN path",41,37,false
+GDS Centrality,,,42,30,true
+✴ highest degree centralities,,"CALL gds.degree.stream('OperationalPoints')
+YIELD nodeId, score
+RETURN gds.util.asNode(nodeId).id AS id, score
+ORDER BY score DESC LIMIT 50;",43,42,false
+✴✍️ degree centrality,,"CALL gds.degree.write('OperationalPoints', {writeProperty: 'degreeScore'})",44,42,false
+𐫰 Highest betweenness centrality,,"CALL gds.betweenness.stream('OperationalPoints')
+YIELD nodeId, score
+RETURN gds.util.asNode(nodeId).id AS id, score
+ORDER BY score DESC LIMIT 50;",45,42,false
+𐫰✍️ betweenness centralities,,"CALL gds.betweenness.write('OperationalPoints', {writeProperty: 'betweennessScore'})",46,42,false
+📒 centralities,,"CREATE INDEX index_OperationalPointName_degreeScore IF NOT EXISTS FOR (opn:OperationalPointName) ON (opn.degreeScore);
+CREATE INDEX index_OperationalPointName_betweennessScore IF NOT EXISTS FOR (opn:OperationalPointName) ON (opn.betweennessScore);",47,42,false
+GDS Clean,,,48,30,true
+📽️🧹 drop GDS in-memory graphs,,CALL gds.graph.drop('OperationalPoints'),49,48,false
