@@ -1,4 +1,4 @@
-# Graph Summit 2023 EMEA - Workshop Digital Twin
+# Graph Summit 2024 EMEA - Workshop Digital Twin
 
 This repository contains the material used during the **Graph Summit 2023 - Building a Graph Solution Workshops**. 
 
