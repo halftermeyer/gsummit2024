@@ -230,7 +230,7 @@ WITH gds.graph.project(
   source,
   target,
   { relationshipProperties: r { .sectionlength, .traveltime } },
-  {undirectedRelationshipTypes: ['SECTION']}
+  {undirectedRelationshipTypes: ['*']}
 ) as g
 RETURN g.graphName AS graph, g.nodeCount AS nodes, g.relationshipCount AS rels",33,31,false
 GDS Path finding,,,34,30,true
