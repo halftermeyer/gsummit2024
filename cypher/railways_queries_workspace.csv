@@ -131,10 +131,10 @@ LIMIT 10;",5,4,false
 RETURN op 
 LIMIT 50;",6,4,false
 😢 Count orphaned nodes,,"MATCH (op:OperationalPoint)
-WHERE NOT EXISTS ( (op)-[:SECTION]-() )
+WHERE NOT EXISTS { (op)-[:SECTION]-() }
 RETURN COUNT(op);",7,4,false
 🫥 Remove orphaned and their names,,"MATCH (op:OperationalPoint)-[:NAMED]->(opn:OperationalPointName)
-WHERE NOT EXISTS ( (op)-[:SECTION]-() )
+WHERE NOT EXISTS { (op)-[:SECTION]-() }
 DETACH DELETE op, opn",8,4,false
 ⭕️-->⭕️ Get rels between OP,,"MATCH path=(:OperationalPoint)--(:OperationalPoint) 
 RETURN path 
@@ -167,14 +167,11 @@ MATCH (op:OperationalPoint)
 WHERE op.id='SECst' 
 RETURN op;",19,14,false
 Data quality,,,20,0,true
-🕵️‍♂️ eurotunnel ?,,"MATCH path=( (uk:UK)-[:SECTION]-(france:France) )
+🕵️‍♂️ eurotunnel ?,,"MATCH path=(uk:UK)-[:SECTION]-(france:France)
 RETURN path 
 LIMIT 1",21,20,false
-🕵🏻 Stockholm to Berlin ?,,"MATCH 
-    (:OperationalPointName {name:'Stockholms central'})<-[:NAMED]-(stockholm:OperationalPoint),
-    (:OperationalPointName {name:'Berlin Hauptbahnhof - Lehrter Bahnhof'})<-[:NAMED]-(berlin:OperationalPoint)
-WITH stockholm, berlin
-MATCH p= (stockholm)-[:SECTION]-{1,20}(berlin)
+🕵🏻 Sweden to Germany ?,,"// will last long
+MATCH p= shortestpath((:Sweden)-[:SECTION*1..200]-(:Germany))
 RETURN p 
 LIMIT 1",22,20,false
 🇩🇪🌉🇩🇰 Curate Ger --> Den,,"MATCH 
@@ -219,7 +216,7 @@ MATCH
 WITH stockholm, malmo
 MATCH path = shortestPath ( (malmo)-[:SECTION*]-(stockholm) )
 RETURN path",29,26,false
-Graph Data Science,,,30,0,true
+Graph Data Science Part,,,30,0,true
 GDS projection,,,31,30,true
 🧹 GDS projection,,"CALL gds.graph.list() YIELD graphName AS toDrop
 CALL gds.graph.drop(toDrop) YIELD graphName
@@ -260,7 +257,7 @@ WITH collect(gds.util.asNode(nodeId).id) AS nodes, componentId
 RETURN nodes, componentId 
 ORDER BY size(nodes) ASC LIMIT 50;",38,37,false
 🏝️✍️ WCCs,,"CALL gds.wcc.write('OperationalPoints', {writeProperty: 'componentId'});",39,37,false
-📒 index wcc componentId,,CREATE INDEX index_OperationalPointName_componentid IF NOT EXISTS FOR (opn:OperationalPointName) ON (opn.componentId);,40,37,false
+📒 index wcc componentId,,CREATE INDEX index_OperationalPoint_componentid IF NOT EXISTS FOR (op:OperationalPoint) ON (op.componentId);,40,37,false
 🏝️ find wccomponent from node,,"MATCH (op:OperationalPoint {id: 'UKN4288'})
 WITH op.componentId as component
 MATCH path = (:OperationalPoint {componentId: component})-[:SECTION]->()
@@ -276,7 +273,36 @@ YIELD nodeId, score
 RETURN gds.util.asNode(nodeId).id AS id, score
 ORDER BY score DESC LIMIT 50;",45,42,false
 𐫰✍️ betweenness centralities,,"CALL gds.betweenness.write('OperationalPoints', {writeProperty: 'betweennessScore'})",46,42,false
-📒 centralities,,"CREATE INDEX index_OperationalPointName_degreeScore IF NOT EXISTS FOR (opn:OperationalPointName) ON (opn.degreeScore);
-CREATE INDEX index_OperationalPointName_betweennessScore IF NOT EXISTS FOR (opn:OperationalPointName) ON (opn.betweennessScore);",47,42,false
+📒 centralities,,"CREATE INDEX index_OperationalPoint_degreeScore IF NOT EXISTS FOR (op:OperationalPoint) ON (op.degreeScore);
+CREATE INDEX index_OperationalPoint_betweennessScore IF NOT EXISTS FOR (op:OperationalPoint) ON (op.betweennessScore);",47,42,false
 GDS Clean,,,48,30,true
 📽️🧹 drop GDS in-memory graphs,,CALL gds.graph.drop('OperationalPoints'),49,48,false
+Bonus,,,50,0,true
+♊️ non border OP with several OPN,,"MATCH (op:OperationalPoint&!BorderPoint)
+WHERE count{(op)-->(opn:OperationalPointName)} > 1
+// pattern comprehension
+RETURN op, [(op)-[r]->(op_name:OperationalPointName) | op_name.name]",51,50,false
+♊️ remove duplicate OPN,,"MATCH (op:OperationalPoint&!BorderPoint)
+MATCH (op)-->(opn:OperationalPointName)
+WITH op, opn.name AS name, collect (opn) AS dupl_opns
+WHERE size (dupl_opns) > 1
+WITH dupl_opns[1..] AS to_delete_opns
+UNWIND to_delete_opns AS to_delete_opn
+CALL {
+    WITH to_delete_opn
+    DETACH DELETE to_delete_opn
+}
+IN TRANSACTIONS OF 100 ROWS
+ON ERROR FAIL",52,50,false
+📒 geolocation,,CREATE POINT INDEX node_point_index_name FOR (n:OperationalPoint) ON (n.geolocation),53,50,false
+QPP constrained traversal,,"// Cypher shortest path
+MATCH 
+    (:OperationalPointName {name:'VALLECAS A.V.'})<-[:NAMED]-(v:OperationalPoint),
+    (:OperationalPointName {name:'RICLA-A.V.'})<-[:NAMED]-(r:OperationalPoint)
+WITH v,r
+MATCH path = (v)(
+    (a)--(b)
+     WHERE point.distance(b.geolocation, v.geolocation) < 300000
+     )*(r)
+RETURN path
+LIMIT 1",54,50,false
